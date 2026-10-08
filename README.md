@@ -1,252 +1,323 @@
-# CSV & Excel Converter voor Meta Ads & CRM (Ommen & Zwolle)
+# CSV & Excel Converter (Ommen & Zwolle) — Technische Documentatie
 
-Een snelle, veilige en 100% lokale webapplicatie voor het verwerken, koppelen, normaliseren, dedupliceren en exporteren van leden- en productdata uit fitness- en clubmanagementsoftware. De tool is specifiek afgestemd op de vestigingen **Ommen** en **Zwolle** en levert kant-en-klare CSV-bestanden op volgens de strikte standaarden van **Meta Ads (Facebook Custom Audiences)** en moderne CRM-systemen.
+Dit document beschrijft de **exacte werking van de huidige codebase** (`src/App.tsx`). Het documenteert nauwkeurig hoe bestanden worden ingelezen, hoe de koppeling en samenvoeging plaatsvinden, welke normalisatieregels gelden, hoe duplicaten worden afgehandeld en hoe de CSV-exports zijn gestructureerd.
 
 ---
 
 ## Inhoudsopgave
 
-1. [Belangrijkste Functies](#belangrijkste-functies)
-2. [Ondersteunde Bestandsformaten & Delimiters](#ondersteunde-bestandsformaten--delimiters)
-3. [Workflow: Hoe Werkt Het?](#workflow-hoe-werkt-het)
-4. [Koppeling van Bestanden op "Klant ref."](#koppeling-van-bestanden-op-klant-ref)
-5. [Alle Ingestelde Formatteringen (Meta Ads Standaarden)](#alle-ingestelde-formatteringen-meta-ads-standaarden)
-6. [High Value Klanten (Drempelwaarde ≥ €400)](#high-value-klanten-drempelwaarde--400)
-7. [Productcategorisatie](#productcategorisatie)
-8. [Deduplicatie & Prioriteringsregels](#deduplicatie--prioriteringsregels)
-9. [Overzicht van Beschikbare Exports](#overzicht-van-beschikbare-exports)
-10. [Privacy & Gegevensbescherming (AVG / GDPR)](#privacy--gegevensbescherming-avg--gdpr)
-11. [Installatie & Lokale Ontwikkeling](#installatie--lokale-ontwikkeling)
+1. [Overzicht & Doel](#overzicht--doel)
+2. [Ondersteunde Bestandsformaten & Inlezen](#ondersteunde-bestandsformaten--inlezen)
+3. [Koppeling & Zoekindex (Klantreferentie, E-mail, Naam)](#koppeling--zoekindex-klantreferentie-e-mail-naam)
+4. [Samenvoegen van Klantprofielen (Fase 1: Registratie)](#samenvoegen-van-klantprofielen-fase-1-registratie)
+5. [Deduplicatie (Fase 2: Groepering)](#deduplicatie-fase-2-groepering)
+6. [Normalisatieregels & Veldformaten](#normalisatieregels--veldformaten)
+7. [High Value Logica (Drempelwaarde €400)](#high-value-logica-drempelwaarde-400)
+8. [Productcategorisatie & Trefwoorden](#productcategorisatie--trefwoorden)
+9. [Filters, Uitzonderingen & Niet-Gekoppelde Producten](#filters-uitzonderingen--niet-gekoppelde-producten)
+10. [CSV-Export Specificaties](#csv-export-specificaties)
+11. [Interface & Downloadmogelijkheden](#interface--downloadmogelijkheden)
+12. [Gegevensverwerking & Privacy (AVG / GDPR Context)](#gegevensverwerking--privacy-avg--gdpr-context)
+13. [Lokale Installatie & Ontwikkeling](#lokale-installatie--ontwikkeling)
 
 ---
 
-## Belangrijkste Functies
+## Overzicht & Doel
 
-- **Multi-formaat upload**: Ondersteuning voor zowel `.csv` als Microsoft Excel (`.xlsx` en `.xls`).
-- **Vestiging-specifieke verwerking**: Gescheiden upload-dropzones voor **Ommen** en **Zwolle**.
-- **Dual-file koppeling**: Upload per vestiging een **Klantenbestand** (met alle contact- en persoonsgegevens) en een **Productenbestand** (met tarieven en afgenomen producten).
-- **Slimme rol-detectie**: Herkent automatisch of een geüpload bestand een klantenlijst of een productenlijst is, inclusief handmatige dropdown-wisselaar.
-- **Automatische koppeling op relatienummer**: Brengt klantgegevens en productinformatie naadloos samen via de kolom `"Klant ref."`.
-- **Meta Ads Custom Audience normalisatie**: Automatische validatie en formattering van e-mailadressen, E.164-telefoonnummers, postcodes, geboortedata, leeftijden en geslachten.
-- **Geavanceerde deduplicatie**: Voorkomt dubbele contacten op basis van e-mail, telefoonnummer of volledige naam, met instelbare vestigingsvoorkeur (Ommen vs. Zwolle eerst) en compleetheidsscoring.
-- **High Value segmentatie**: Filtert klanten met een losse aankoop of tarief van **minimaal €400** (puur los tarief, geen cumulatief maandtotaal).
-- **Automatische productsegmentatie**: Directe exports voor *No More Pain*, *Personal Training*, *Groepslessen* en *Get Leaner*.
-- **Interactieve preview**: Inzicht in geüploade bestanden, koppelingsstatus, statistieken en datatabellen vóór het downloaden.
-- **100% Client-side privacy**: Alle berekeningen vinden plaats in de webbrowser van de gebruiker. Er worden geen persoonsgegevens naar externe servers verzonden.
+De applicatie is gebouwd in React (TypeScript) en Vite om data uit fitness- en clubmanagementsoftware te combineren en voor te bereiden voor exports naar bijvoorbeeld advertentieplatformen (zoals Meta / Facebook) of spreadsheetprogramma's.
+
+Er zijn twee uploadsecties: één voor vestiging **Ommen** en één voor vestiging **Zwolle**. Binnen elke vestiging kunnen één of meerdere bestanden worden geüpload (zoals een klantenbestand en/of een producten-/abonnementenbestand).
 
 ---
 
-## Ondersteunde Bestandsformaten & Delimiters
+## Ondersteunde Bestandsformaten & Inlezen
 
-| Formaat | Extensie | Parser | Bijzonderheden |
+### Bestandsformaten
+- **CSV (`.csv`)**: Wordt ingelezen via **PapaParse** met `header: true` en `skipEmptyLines: 'greedy'`. Scheidingstekens (zoals `;`, `,` of tab) worden automatisch door de parser gedetecteerd. Byte Order Marks (`\ufeff`) en aanhalingstekens rond kolomnamen worden verwijderd.
+- **Excel (`.xlsx`, `.xls`, `.xlsm`, `.xlsb`)**: Wordt ingelezen via **SheetJS (`xlsx`)**. Uitsluitend het **eerste werkblad** (`workbook.SheetNames[0]`) wordt uitgelezen met datumweergave `yyyy-mm-dd`. Lege rijen worden gefilterd.
+
+### Automatische Rol-detectie (`detectFileRole`)
+Bij het uploaden krijgt elk bestand automatisch een rol toegewezen: `'customers'` (Klanten) of `'products'` (Producten):
+1. **Bestandsnaam**:
+   - Bevat de naam `product`, `abonnement`, `tarief`, `pakket`, `dienst`, `contract`, `omzet` of `factuur` (en géén `klant` of `leden`) $\rightarrow$ `'products'`.
+   - Bevat de naam `klant`, `leden`, `member`, `customer` of `relatie` (en géén `product`) $\rightarrow$ `'customers'`.
+2. **Inhoudsanalyse (eerste 50 rijen)**:
+   - Als $\ge 20\%$ van de steekproefrijen een e-mailadres bevat $\rightarrow$ `'customers'`.
+   - Als kolomnamen trefwoorden bevatten zoals `tarief`/`prijs` of `product`/`abonnement`, en er géén e-mailadressen en géén telefoonnummers in de steekproef staan $\rightarrow$ `'products'`.
+3. **Disambiguatie bij 2 bestanden**: Als er tegelijk exact 2 bestanden voor een vestiging worden geüpload met dezelfde gedetecteerde rol, en één van de twee bevat productgerelateerde trefwoorden in de naam, worden de rollen automatisch verdeeld over `products` en `customers`.
+4. **Handmatige aanpassing**: In de interface kan per geüpload bestand via een dropdown altijd handmatig worden gewisseld tussen `👤 Klanten` en `🏷️ Producten`.
+
+---
+
+## Koppeling & Zoekindex (Klantreferentie, E-mail, Naam)
+
+De koppeling tussen gegevens vindt plaats in de functie `findCustomer`:
+
+### 1. Zoekvolgorde
+Wanneer een regel wordt gematcht met een bestaand klantprofiel, zoekt het systeem in deze strikte volgorde:
+1. **Klantreferentie (`ref`)**:
+   - Zoekt exact op de getrimde waarde (`profilesByRef.get(trimmed)`).
+   - Zoekt case-insensitive (`profilesByRef.get(trimmed.toLowerCase())`).
+   - **Zonder voorloopnullen**: Indien de referentie volledig uit cijfers bestaat (`/^\d+$/`), wordt ook gezocht op de numerieke string zonder voorloopnullen (`profilesByRef.get(String(Number(trimmed)))`). Bijvoorbeeld: `'00123'` matcht met `'123'`.
+2. **E-mailadres (`email`)**:
+   - Indien aanwezig en geldig volgens `isLikelyEmail`: zoekt in `profilesByEmail` op `email.toLowerCase().trim()`.
+3. **Volledige naam (`fn` en `ln`)**:
+   - Indien zowel voornaam als achternaam aanwezig zijn: zoekt in `profilesByName` op `${fn.toLowerCase().trim()}_${ln.toLowerCase().trim()}`.
+
+### 2. Gecombineerde Zoekindex over Beide Vestigingen
+- De zoekindex (`profilesByRef`, `profilesByEmail`, `profilesByName`) wordt **gezamenlijk opgebouwd over alle geüploade bestanden**, dus over Ommen én Zwolle samen.
+- De index wordt **niet** per vestiging geïsoleerd. Een klantreferentie of e-mailadres uit een bestand van Zwolle kan daardoor matchen met een eerder ingelezen klantprofiel uit een bestand van Ommen.
+
+### 3. Herkende Kolomnamen voor Klantreferentie (`getKlantRef`)
+De functie `getKlantRef` verwijdert alle niet-alfanumerieke tekens uit kolomnamen en zoekt naar:
+- Exact genormaliseerd: `klantref`, `klantreferentie`, `referentie`, `ref`, `klantnummer`, `klantnr`, `lidnummer`, `lidnr`, `relatienummer`, `relatienr`, `memberid`, `clientid`, `klantid`, `relatieid`.
+- Als fallback worden kolomnamen geaccepteerd die `klantref`, `lidnummer` of `klantnummer` bevatten.
+
+---
+
+## Samenvoegen van Klantprofielen (Fase 1: Registratie)
+
+Voordat er gefilterd of geëxporteerd wordt, worden klantbestanden verwerkt via `registerOrMergeCustomer`.
+
+### Volgorde van Verwerking
+- De bestandenlijst wordt samengesteld als:
+  ```ts
+  const allFilesWithSource = [
+    ...ommenFiles.map(f => ({ ...f, source: 'Ommen' })),
+    ...zwolleFiles.map(f => ({ ...f, source: 'Zwolle' }))
+  ];
+  ```
+- **Ommen-bestanden worden hierdoor altijd vóór Zwolle-bestanden verwerkt.**
+- Er is **geen** instelbare vestigingsvoorkeur in de applicatie aanwezig; de volgorde ligt vast in de code.
+
+### Leidend Profiel & Aanvullende Gegevens
+- Het **eerst aangetroffen profiel blijft leidend**. De oorspronkelijke vestigingsbron (`source: 'Ommen'`) en de ruwe rij (`raw`) van het eerste record blijven behouden.
+- Wanneer een later record matcht via referentie, e-mail of naam, vult dit latere record **uitsluitend ontbrekende velden aan**:
+  - `email`: alleen overgenomen als het bestaande profiel nog geen e-mail had.
+  - `phone`: alleen overgenomen als het bestaande profiel nog geen telefoon had.
+  - `fn`, `ln`, `zip`, `ct`, `dob`, `doby`, `age`, `gen`, `ref`: alleen ingevuld indien leeg in het bestaande profiel.
+  - `baseProduct`, `baseValue`, `baseDate`: alleen ingevuld indien het bestaande profiel nog geen basisproduct had.
+- **Let op:** Deze eerste samenvoegstap (`registerOrMergeCustomer`) blijft **altijd actief**, ongeacht of de deduplicatieschakelaar in de interface aan- of uitstaat.
+
+---
+
+## Deduplicatie (Fase 2: Groepering)
+
+Na het samenstellen van de basisrecords (`allRecords`) volgt een optionele tweede deduplicatiestap (`if (deduplicate)`):
+
+### 1. Groeperingssleutel
+De deduplicatiestap groepeert records op basis van de volgende sleutel:
+1. `ref_${rec._klantRef.toLowerCase().trim()}` (indien `_klantRef` aanwezig is).
+2. Anders: `email_${rec.email.toLowerCase().trim()}` (indien `email` aanwezig is).
+3. Anders: `name_${rec.fn.toLowerCase().trim()}_${rec.ln.toLowerCase().trim()}`.
+
+> **Belangrijk:** In deze deduplicatiefase vindt **géén matching op telefoonnummer** plaats. Alleen klantreferentie, e-mailadres en volledige naam worden als groeperingssleutel gebruikt.
+
+### 2. Selectie van het Beste Record binnen een Groep
+Als een groep meerdere records bevat, wordt het winnende record gekozen door sortering op:
+1. **Compleetheidsscore**:
+   $$\text{score} = (\text{heeft email} \times 4) + (\text{heeft phone} \times 3) + (\text{heeft zip} \times 2) + (\text{heeft dob} \times 2)$$
+   Het record met de hoogste score komt bovenaan.
+2. **Recentste datum (`_actiefSindsDate`)**:
+   Bij gelijke score wint het record waarvan de startdatum het meest recent is (`b.date - a.date`).
+
+### 3. Waardebehoud bij Deduplicatie
+Binnen de groep wordt de hoogste individuele aankoopwaarde (`maxSingleTariff`) bepaald:
+- Als `maxSingleTariff >= 400`, en het geselecteerde record heeft een lagere of lege waarde, krijgt het geselecteerde record `value = maxSingleTariff`.
+- Als het geselecteerde record een waarde van `0` of leeg heeft, en er is een eerdere waarde $> 0$ in de groep, wordt die overgenomen.
+
+### 4. Uitschakelen van Deduplicatie
+Wanneer de schakelaar *"Dedupliceren activeren"* in de interface wordt uitgevinkt:
+- Wordt de tweede groeperingsstap (Stap B) overgeslagen.
+- Blijft Fase 1 (`registerOrMergeCustomer`) wel actief (klanten die in dezelfde run al gekoppeld zijn, blijven samengevoegd in `profilesList`).
+
+---
+
+## Normalisatieregels & Veldformaten
+
+De velden in elk record worden als volgt verwerkt door `processRawRow`:
+
+| Veld | Normalisatieregel in Code | Wat er WEL gebeurt | Wat er NIET gebeurt |
 | :--- | :--- | :--- | :--- |
-| **CSV** | `.csv` | PapaParse | Automatische scheidingsteken-detectie (puntkomma `;`, komma `,` of tab `\t`). Ondersteunt quotes en UTF-8 encoding. |
-| **Excel Modern** | `.xlsx` | SheetJS (`xlsx`) | Leest automatisch het eerste werkblad uit met behoud van datums en numerieke waarden. |
-| **Excel Klassiek** | `.xls` | SheetJS (`xlsx`) | Volledige ondersteuning voor oudere Excel 97-2004 werkmappen. |
+| **`email`** | `isLikelyEmail(emailRaw) ? emailRaw.trim().toLowerCase() : ""` | - Spaties aan begin/eind getrimd<br>- Omgezet naar kleine letters<br>- Leeggemaakt als het niet voldoet aan `isLikelyEmail` | Geen complexe RFC-regex. De controle is uitsluitend: bevat `@` en `.`, lengte $\ge 5$, geen spaties, begint/eindigt niet met `@`. |
+| **`phone`** | `formatPhone(phoneRaw)` | - Spaties, streepjes, haakjes verwijderd: `/[\s\-\(\)]/g`<br>- `0031...` $\rightarrow$ `+31...`<br>- `31...` $\rightarrow$ `+31...`<br>- `06...` $\rightarrow$ `+316...`<br>- Begint met `5` én exact 9 cijfers $\rightarrow$ `0` voorgevoegd (`05...`) | - **Het `+` teken blijft behouden** (`+316...`)<br>- Vaste nummers worden **niet** standaard naar `+31` omgezet<br>- **Geen lengtevalidatie** op 9–15 cijfers; kortere/langere nummers worden niet afgekeurd. |
+| **`fn`** | Direct uit kolomnaam | - Waarde getrimd via `getValueByHeader` | **Geen kapitalisatie / Title Case**. Invoer `JAN` blijft `JAN`. |
+| **`ln`** | Direct uit kolomnaam | - Als aparte tussenvoegselkolom aanwezig is én ontbreekt in achternaam: samengevoegd als `${tussenvoegsel} ${lnRaw}` | **Geen kapitalisatie / Title Case**. Invoer `DE BOER` blijft `DE BOER`. |
+| **`zip`** | Direct uit kolomnaam | - Waarde getrimd | **Geen automatische postcode-formattering**. Spaties worden niet verwijderd (`7731 BC` blijft `7731 BC`). |
+| **`ct`** | Direct uit kolomnaam | - Waarde getrimd | **Geen automatische hoofdlettercorrectie**. `ommen` blijft `ommen`. |
+| **`country`** | Vaste waarde | - Altijd ingesteld op **`'NL'`** (hoofdletters) | Geen dynamische landdetectie. |
+| **`dob`** | `format(dobDate, 'yyyy-MM-dd')` | - Datumnotaties (`DD-MM-YYYY`, `YYYY-MM-DD`, etc.) geparsed naar **`YYYY-MM-DD`** | Wordt **niet** geformatteerd als `YYYYMMDD` zonder streepjes. |
+| **`doby`** | `format(dobDate, 'yyyy')` | - 4-cijferig geboortejaar (`YYYY`) | - |
+| **`gen`** | Case-insensitive mapping | - `'man'`, `'m'`, `'mannelijk'` $\rightarrow$ **`'M'`**<br>- `'vrouw'`, `'f'`, `'v'`, `'vrouwelijk'` $\rightarrow$ **`'F'`** | **Onbekende waarden blijven behouden** zoals ingevoerd (bijv. `'Dhr'` of `'Onbekend'` blijft staan). |
+| **`age`** | `calculateAge(dobDate)` | - Berekend t.o.v. de huidige datum (jaarverschil gecorrigeerd voor verjaardag) | Leeg als er geen geboortedatum is. |
+| **`value`** | `parseCurrency(tariffRaw)` | - Valutasymbolen verwijderd, komma's/punten genormaliseerd, afgerond op 2 decimalen (`Math.round(val * 100) / 100`) | Krijgt in de geëxporteerde CSV **niet** verplicht twee decimalen (kan `400` of `299.5` zijn). |
+| **`product`** | Direct uit kolomnaam | - Naam van het product/abonnement | **Wordt NIET opgenomen in de CSV-export** (alleen intern en in de UI gebruikt). |
 
 ---
 
-## Workflow: Hoe Werkt Het?
+## High Value Logica (Drempelwaarde €400)
 
-```
-┌───────────────────────────────────┐     ┌───────────────────────────────────┐
-│     Vestiging Ommen               │     │     Vestiging Zwolle              │
-│  - Klantenbestand (CSV / Excel)   │     │  - Klantenbestand (CSV / Excel)   │
-│  - Productenbestand (CSV / Excel) │     │  - Productenbestand (CSV / Excel) │
-└─────────────────┬─────────────────┘     └─────────────────┬─────────────────┘
-                  │                                         │
-                  ▼                                         ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 1. INLEZEN & ROL-DETECTIE                                                   │
-│    - Bepaal per bestand: 'Klanten' (NAW/contact) of 'Producten' (tarieven)  │
-└─────────────────────────────────────┬───────────────────────────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 2. KOPPELING OP "Klant ref."                                                │
-│    - Match productrecords aan klantrecords via relatienummer                │
-│    - Verrijk productrecords met NAW, email, telefoon, geboortedatum         │
-└─────────────────────────────────────┬───────────────────────────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 3. NORMALISATIE NAAR META ADS STANDAARDEN                                   │
-│    - E-mail lowercase & regex validatie                                     │
-│    - Telefoonnummer omzetten naar '316...' (E.164 zonder plus)              │
-│    - Postcode naar '1234AB', geboortedatum naar 'YYYYMMDD', leeftijd 'age'  │
-└─────────────────────────────────────┬───────────────────────────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 4. DEDUPLICATIE & BRONPRIORITERING                                          │
-│    - Unieke match op email, telefoon of naam                                │
-│    - Rangschikking op basis van voorkeursvestiging en compleetheidsscore    │
-│    - Behoud van hoogste individuele tarief (≥ €400)                         │
-└─────────────────────────────────────┬───────────────────────────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 5. EXPORTS                                                                  │
-│    - Alle Klanten (Totaal)       - High Value (≥ €400)                      │
-│    - No More Pain                - Personal Training                        │
-│    - Groepslessen                - Get Leaner                               │
-│    - Vestiging Ommen             - Vestiging Zwolle                         │
-│    - Duplicaten Overzicht        - Download Alles (Bundle)                  │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+De selectie voor de High Value lijst (`highValue`) volgt deze specifieke programmalogica:
+
+1. **Vaste Drempelwaarde**:
+   - `const HIGH_VALUE_THRESHOLD = 400;`
+2. **Minimaal Één Los Tarief (Geen Optelsom)**:
+   - Een klant kwalificeert als een individueel productrecord of geregistreerd tarief een numerieke waarde van **$\ge 400$** heeft (`!isNaN(num) && num >= 400`).
+   - Losse maandbedragen (zoals 12 keer €45) worden **niet** bij elkaar opgeteld.
+3. **Hoe de Hoogste Waarde en Productomschrijving worden Bewaard**:
+   - Bij het inlezen van het productenbestand wordt voor elke klant de hoogste individuele aankoopwaarde bijgehouden in `cust.maxSingleTariff`:
+     ```ts
+     if (!isNaN(valNum) && valNum > cust.maxSingleTariff) {
+       cust.maxSingleTariff = valNum;
+     }
+     if (!isNaN(valNum) && valNum >= HIGH_VALUE_THRESHOLD) {
+       cust.highValueProduct = prodName || cust.highValueProduct;
+     }
+     ```
+   - Bij het samenstellen van `allRecords`:
+     - Als `cust.maxSingleTariff >= 400`:
+       - `displayValue = cust.maxSingleTariff;`
+       - `displayProduct = cust.highValueProduct || (latestProd ? latestProd.name : cust.baseProduct);`
+     - Als `cust.maxSingleTariff < 400`:
+       - Wordt de waarde en productnaam van het **meest recente product** gekozen (`latestProd`), of als dat ontbreekt het basisproduct van de klant (`cust.baseValue` / `cust.baseProduct`).
 
 ---
 
-## Koppeling van Bestanden op "Klant ref."
+## Productcategorisatie & Trefwoorden
 
-In fitness- en ledenadministratiesoftware worden persoonsgegevens en aankoopgegevens vaak gescheiden geëxporteerd:
-1. **Klantenbestand (`customers`)**: Bevat naam, e-mailadres, telefoonnummer, adres, woonplaats, postcode, geslacht, geboortedatum en het klantnummer.
-2. **Productenbestand (`products`)**: Bevat de afgenomen lidmaatschappen, strippenkaarten, tarieven, startdata en het bijbehorende klantnummer.
+Records worden toegekend aan productcategorieën via de functie `matchesCategory`. 
 
-### Herkende Kolomnamen voor het Koppelveld:
-De applicatie herkent automatisch de volgende kolomkoppen (ongeacht hoofdletters of leestekens):
-- `Klant ref.` / `Klant ref`
-- `Klantnummer` / `Klantnr` / `Klant nr`
-- `Relatienummer` / `Relatienr`
-- `Klant ID` / `CustomerID` / `Customer ID`
-- `Debiteurnummer` / `Lidnummer`
+### Zoekbereik
+De matching zoekt in:
+1. De veldwaarde `rec.product` (omgezet naar hoofdletters).
+2. Indien geen match: **alle gecombineerde tekstwaarden van de oorspronkelijke rij** (`Object.values(rec._raw).filter(Boolean).join(' ').toUpperCase()`).
 
-### Hoe de Koppeling Verloopt:
-- Wanneer zowel een klantenbestand als een productenbestand voor een vestiging aanwezig zijn, zoekt de matcher voor elk record in het productenbestand de bijbehorende klant op via het klantnummer.
-- Alle ontbrekende contactvelden (`email`, `phone`, `fn`, `ln`, `zip`, `ct`, `dob`, `doby`, `gen`, `age`) in het productrecord worden overgenomen uit het stam-klantenbestand.
-- Het productrecord levert de actuele `product`-naam en het individuele `value`-tarief.
-- Als een klant in het klantenbestand staat maar nog geen product heeft, blijft het contact behouden en worden de beschikbare persoonsgegevens meegenomen.
-- Als een bestand per ongeluk als verkeerde rol is aangemerkt, kan de gebruiker via het dropdown-menu bij het bestand direct wisselen tussen **"Klantenbestand"** en **"Productenbestand"**.
+### Volledige Trefwoordenlijsten per Categorie
 
----
+#### 1. No More Pain (`no_more_pain`)
+- **Trefwoorden:**
+  `NO MORE PAIN`, `NO-MORE-PAIN`, `NOMOREPAIN`, `3 REVALIDATIE BEHANDELINGEN`, `REVALIDATIE BEHANDELINGEN`, `REVALIDATIE`, `REVALIDATIETRAJECT`, `REVALIDATIE TRAJECT`, `NMP`, `PIJNVRIJ`, `PIJN VRIJ`, `PIJN`, `PAIN`, `FYSIO`, `FYSIOTHERAPIE`, `HERSTEL`, `REVALIDEREN`, `BEHANDELING`, `BEHANDELINGEN`, `BLESSURE`, `RUGKLACHTEN`, `SCHOUDERKLACHTEN`.
+- **Speciale Uitzonderingsregel in Code:**
+  Bevat de productnaam of de ruwe rij de term `COACHING` of `PERSOONLIJKE ONTWIKKELING`, én is de tariefwaarde exact `299` (of `299.00`), dan kwalificeert dit record **ook** voor de categorie *No More Pain*.
 
-## Alle Ingestelde Formatteringen (Meta Ads Standaarden)
+#### 2. Personal Training (`personal_training`)
+- **Trefwoorden:**
+  `PERSONAL TRAINING`, `PERSONAL-TRAINING`, `PERSONALTRAINING`, `PERSOONLIJKE ONTWIKKELING`, `PERSONAL COACH`, `PERSONAL COACHING`, `1-OP-1`, `1 OP 1`, `1-ON-1`, `1 ON 1`, `1:1`, `DUO TRAINING`, `DUO-TRAINING`, `DUOTRAINING`, `INDIVIDUEEL`, `TRAJECT`, `COACHING`, `COACH`, `BEGELEIDING`, ` PT`, `PT `, `PT-`, `PT/`, `(PT)`, `[PT]`, `/PT`, `-PT`, `_PT`, ` PT `.
 
-Elk geëxporteerd CSV-bestand voldoet exact aan de kolomnamen en dataspecificaties van Meta Custom Audiences:
+#### 3. Groepslessen (`groepslessen`)
+- **Trefwoorden:**
+  `GROEPSLESSEN`, `GROEPSLES`, `VIKING MODE`, `VIKINGMODE`, `SOLID STRONG`, `SOLIDSTRONG`, `GOLDEN TIGER`, `GOLDENTIGER`, `SMALL GROUP`, `SMALLGROUP`, `SMALL-GROUP`, `BOOTCAMP`, `CIRCUIT`, `GROEP`, `GROUP`, `FIT & STRONG`, `FIT AND STRONG`, `UNLIMITED`, `ONBEPERKT`, `FITNESS`, `SPORTER`, `ABONNEMENT`, `LIDMAATSCHAP`, `COMMUNITY`, `OPEN GYM`, `VRIJ SPORTEN`, `VRIJ TRAINEN`, `GYM`, `CROSSFIT`, `WORKOUT`, `1X PER WEEK`, `2X PER WEEK`, `3X PER WEEK`, `1 X PER WEEK`, `2 X PER WEEK`, `3 X PER WEEK`, `PER WEEK`, `PER MAAND`, `STRIPPENKAART`, `RITTENKAART`.
 
-| Kolom | Beschrijving | Formattering & Validatieregels | Voorbeeld Invoer | Voorbeeld Uitvoer |
-| :--- | :--- | :--- | :--- | :--- |
-| **`email`** | E-mailadres | - Volledig in kleine letters (lowercase)<br>- Witruimtes en tabs getrimd<br>- Strikte regex-validatie (`/^[^\s@]+@[^\s@]+\.[^\s@]+$/`)<br>- **Leeg indien ongeldig** (voorkomt dat klantnummers of ongeldige tekst in de e-mailkolom belanden) | ` Jan.Jansen@Gmail.com ` | `jan.jansen@gmail.com` |
-| **`phone`** | Telefoonnummer | - Alle leestekens, spaties, haakjes en streepjes verwijderd<br>- Voorloopnullen bij Nederlandse mobiele nummers (`06...` of `0031...`) omgezet naar landcode **`31`**<br>- Internationale `+` wordt verwijderd (`+316...` $\rightarrow$ `316...`)<br>- Geldigheidscontrole: 9 t/m 15 numerieke cijfers<br>- Leeg gelaten indien onvolledig of ongeldig | `+31 (0)6 - 12 34 56 78` | `31612345678` |
-| **`fn`** | Voornaam | - Eerste letter hoofdletter, rest kleine letters (Title Case)<br>- Titels en voorvoegsels opgeschoond | `JAN` | `Jan` |
-| **`ln`** | Achternaam | - Juiste kapitalisatie met behoud van Nederlandse tussenvoegsels (`de`, `van`, `van der`, `ter`, `in 't`, etc.) | `VAN DER VEEN` | `van der Veen` |
-| **`zip`** | Postcode | - Nederlandse postcodes omgezet naar 4 cijfers + 2 hoofdletters **zonder spatie**<br>- Buitenlandse postcodes ontdaan van ongeldige leestekens | `7731 bc` of `7731 BC` | `7731BC` |
-| **`ct`** | Woonplaats | - Volledige plaatsnaam met correcte hoofdletters | `ommen` | `Ommen` |
-| **`country`** | Landcode | - Vaste 2-letterige ISO landcode in kleine letters | `Nederland` / leeg | `nl` |
-| **`dob`** | Geboortedatum | - ISO numerieke notatie: **`YYYYMMDD`**<br>- Herkent Nederlandse datumnotaties (`DD-MM-YYYY`, `DD/MM/YYYY`) en Excel datum-serienummers | `24-03-1992` | `19920324` |
-| **`doby`** | Geboortejaar | - 4-cijferig geboortejaar (**`YYYY`**) | `24-03-1992` | `1992` |
-| **`gen`** | Geslacht | - `m` voor man / dhr / heer<br>- `f` voor vrouw / mevr / dame<br>- Leeg indien onbekend of niet ingevuld | `Vrouw` of `Mevr.` | `f` |
-| **`age`** | Leeftijd | - Dynamisch berekend als geheel getal op basis van geboortedatum t.o.v. de huidige datum | Geboren in 1992 | `34` *(of actuele leeftijd)* |
-| **`value`** | Tarief / Waarde | - Numeriek bedrag met 2 decimalen (geen valutasymbolen of punten als scheidingsteken)<br>- Behoudt het **hoogste individuele losse tarief** van de klant | `€ 450,00` | `450.00` |
-| **`product`** | Product / Lidmaatschap | - Schone tekstuele benaming van het meest recente of hoogst gewaardeerde product | `"10 Rittenkaart PT"` | `10 Rittenkaart PT` |
+#### 4. Get Leaner (`get_leaner`)
+- **Trefwoorden:**
+  `GET LEANER`, `GET-LEANER`, `GETLEANER`, `LEANER`, `LEAN`, `AFVALLEN`, `VETVERLIES`, `GEWICHTSVERLIES`, `VOEDING`, `VOEDINGSCHEMA`, `VOEDINGSBEGELEIDING`, `NUTRITION`, `DIET`, `DIEET`, `SHRED`, `BODY COMPOSITION`, `TRANSFORMATIE`, `CHALLENGE`, `LIFESTYLE`.
+
+### Overlap tussen Categorieën
+De categorieën sluiten elkaar **niet** uit. Een regel met bijvoorbeeld `"Small Group PT"` bevat zowel trefwoorden voor *Personal Training* als *Groepslessen* en zal in **beide** exports verschijnen.
 
 ---
 
-## High Value Klanten (Drempelwaarde ≥ €400)
+## Filters, Uitzonderingen & Niet-Gekoppelde Producten
 
-De selectie voor de **High Value** export is gebaseerd op het principe van een **los aankoopbedrag**:
+### Geen Filter op Actieve Klanten of Betaalstatus
+- De applicatie bevat **geen filter** op actieve versus inactieve leden, opgezegde abonnementen of betaalstatus. Alle rijen in de bronbestanden worden verwerkt.
 
-1. **Puur Los Tarief (Niet Cumulatief)**:
-   - Klanten worden **niet** geselecteerd op basis van een optelsom van vele kleine maandelijkse contributies (zoals 12 × €35 = €420).
-   - Een klant kwalificeert uitsluitend als er minimaal één individuele transactie, lidmaatschap of productafname is met een tarief van **minimaal €400** (bijvoorbeeld een Personal Training pakket van €450 of een No More Pain traject).
-2. **Drempelwaarde**:
-   - De drempelwaarde is vast ingesteld op **€400.00**.
-3. **Behoud van Waarde bij Deduplicatie**:
-   - Als een klant meerdere records heeft (bijvoorbeeld een regulier maandabonnement van €45 én een PT-pakket van €600), behoudt het gededupliceerde klantrecord automatisch het hoogste losse tarief (€600.00).
+### Werking van het Tarieffilter (`tariffFilter`)
+- De checkbox *"Verwijder records zonder tarief"* staat **standaard uitgeschakeld** (`tariffFilter = false`).
+- Wanneer ingeschakeld, filtert deze uitsluitend rijen met `value === ""` of `Number(value) === 0` uit de totale klantenlijst (`all`) en daarmee de High Value lijst.
+- **Productexports worden hierdoor niet beïnvloed:** De exports per productcategorie (`productExports`) worden samengesteld uit `candidateProductRecords` en worden niet gefilterd door de `tariffFilter`-schakelaar.
 
----
-
-## Productcategorisatie
-
-De converter analyseert de productomschrijving van elk record en segmenteert automatisch in de volgende marketingcategorieën:
-
-| Categorie | Trefwoorden & Detectieregels | Doelgroep / Toepassing |
-| :--- | :--- | :--- |
-| **No More Pain** | `no more pain`, `nmp`, `pijn`, `revalidatie`, `fysio`, `rugklachten` | Klanten die specifiek een pijnvrij- of revalidatietraject volgen. |
-| **Personal Training** | `personal training`, `pt `, ` pt`, `1-op-1`, `1 op 1`, `coaching`, `traject` | Klanten met individuele coaching en hoogwaardige begeleiding. |
-| **Groepslessen** | `groepsles`, `groepslessen`, `small group`, `sgt`, `bootcamp`, `spinning`, `yoga`, `pilates`, `fitness` | Deelnemers aan groepsactiviteiten en algemene fitnessabonnementen. |
-| **Get Leaner** | `get leaner`, `leaner`, `afvallen`, `vetverlies`, `lifestyle`, `voeding` | Deelnemers aan afval- en leefstijlprogramma's. |
+### Niet-Gekoppelde Producten
+- Als in een productenbestand een rij staat waarvan de `"Klant ref."`, het e-mailadres of de naam niet voorkomt in het klantenbestand:
+  ```ts
+  const standalone = processRawRow(rawRow, f.source);
+  candidateProductRecords.push(standalone);
+  ```
+- Dit record wordt **wél** meegenomen in de beoordeling voor productcategorieën (`productExports`).
+- Dit record wordt **niet** toegevoegd aan `profilesList`, en verschijnt daarom **niet** in de totale klantenlijst (`all`) of in de High Value lijst (`highValue`) wanneer er afzonderlijke klantenbestanden zijn ingelezen.
 
 ---
 
-## Deduplicatie & Prioriteringsregels
+## CSV-Export Specificaties
 
-Wanneer bestanden uit meerdere vestigingen (Ommen en Zwolle) worden samengevoegd, kunnen klanten dubbel voorkomen. De applicatie past een intelligent meerstaps deduplicatie-algoritme toe:
+Alle CSV-bestanden worden gegenereerd via `Papa.unparse` met de volgende instellingen:
 
-### 1. Detectie van Duplicaten
-Twee records worden als dezelfde persoon beschouwd als er een overeenkomst is op:
-1. **E-mailadres** (ongevoelig voor hoofdletters)
-2. **Telefoonnummer** (genormaliseerd naar E.164 standaard)
-3. **Volledige naam** (`fn` + `ln` identiek, bij ontbreken van telefoon en email)
-
-### 2. Bepaling van het Primaire Record ("Beste Record")
-Wanneer een duplicaat wordt gevonden, wordt het winnende stamrecord gekozen op basis van:
-1. **Vestigingsprioriteit**: Instelbaar in de interface:
-   - *Optie A*: **Ommen heeft prioriteit** $\rightarrow$ Ommen-record behoudt voorrang.
-   - *Optie B*: **Zwolle heeft prioriteit** $\rightarrow$ Zwolle-record behoudt voorrang.
-2. **Compleetheidsscore**: Indien binnen dezelfde vestiging of bij gelijke voorkeur, wint het record met de meeste ingevulde velden (aanwezigheid van telefoon, e-mail, adres, geboortedatum).
-3. **Recentheid**: Het meest recent actieve lidmaatschap (`Actief sinds`) geniet voorrang.
-4. **Tariefbehoud**: Het winnende record erft altijd het **hoogste individuele tarief** (`value`) van alle samengevoegde records.
+1. **Scheidingsteken**:
+   - `delimiter: ";"` (Europese puntkomma, geoptimaliseerd voor Nederlandse Excel-installaties).
+2. **Aanhalingstekens**:
+   - Wordt bepaald door de instelling `noQuotes` (standaard ingeschakeld). Bij `noQuotes = true` worden alleen aanhalingstekens geplaatst waar nodig (`quotes: false`).
+3. **Exacte Kolomvolgorde**:
+   De functie `cleanForExport` levert exact de volgende 12 kolommen op:
+   ```csv
+   email;phone;fn;ln;zip;ct;country;dob;doby;gen;age;value
+   ```
+   > **Let op:** Het veld `product` zit **niet** in deze lijst en wordt dus **niet meegeëxporteerd** in de CSV-bestanden!
+4. **Bedragnotatie**:
+   - Bedragen krijgen in de CSV geen verplichte twee decimalen (bijvoorbeeld `400` of `299.5`). Alleen in de tabellen in de gebruikersinterface wordt `.toFixed(2)` getoond.
 
 ---
 
-## Overzicht van Beschikbare Exports
+## Interface & Downloadmogelijkheden
 
-Alle exports worden gegenereerd met UTF-8 encoding en standaard komma-gescheiden waarden, direct klaar voor upload in Meta Ads Manager of import in Excel/CRM:
+De interface biedt specifieke downloadknoppen:
 
-1. **`klanten_totaal_gededupliceerd.csv`**: Complete gecombineerde database van alle unieke klanten uit beide vestigingen, verrijkt met productdata.
-2. **`klanten_high_value_400plus.csv`**: Exclusieve lijst van unieke klanten met een individueel tarief $\ge$ €400 (met volledige contactgegevens).
-3. **`product_no_more_pain.csv`**: Alle klanten die het No More Pain programma volgen of hebben gevolgd.
-4. **`product_personal_training.csv`**: Alle klanten met Personal Training afnames.
-5. **`product_groepslessen.csv`**: Alle klanten met groepsles- of fitnessabonnementen.
-6. **`product_get_leaner.csv`**: Alle klanten van het Get Leaner leefstijltraject.
-7. **`klanten_ommen.csv`**: Unieke klanten behorend bij vestiging Ommen.
-8. **`klanten_zwolle.csv`**: Unieke klanten behorend bij vestiging Zwolle.
-9. **`duplicaten_overzicht.csv`**: Gedetailleerd audit-rapport van alle gedetecteerde duplicaten met reden van samenvoeging.
-10. **Knop "Download Alle CSV's"**: Downloadt in één klik alle afzonderlijke doelgroepbestanden.
+### 1. Klantenlijsten & High Value
+De standaard bestandsnamen bevatten de datum van vandaag (`DD-MM-YYYY`):
+- **Volledige Lijst**: `All Customers - DD-MM-YYYY.csv`
+- **High Value Totaal**: `High Value Customers - DD-MM-YYYY.csv` (alle records $\ge$ €400)
+- **High Value Ommen**: `High Value - Ommen - DD-MM-YYYY.csv`
+- **High Value Zwolle**: `High Value - Zwolle - DD-MM-YYYY.csv`
+
+*(De bestandsnamen van deze vier exports kunnen via invoervelden in de interface worden aangepast).*
+
+### 2. Product- & Locatie-exports
+Per productcategorie (*No More Pain*, *Personal Training*, *Groepslessen*, *Get Leaner*) zijn er drie downloadknoppen:
+- `[Categorienaam] - Ommen - DD-MM-YYYY.csv`
+- `[Categorienaam] - Zwolle - DD-MM-YYYY.csv`
+- `[Categorienaam] - Totaal - DD-MM-YYYY.csv`
+
+Daarnaast is er een knop **"Download Alle Product Exports"**:
+- Deze knop triggert achtereenvolgens (met een tussentijd van 300 ms per bestand) de afzonderlijke downloads van alle niet-lege productbestanden. Er wordt **geen ZIP-bestand** gegenereerd.
+
+### 3. Wat de Interface NIET Biedt
+- Er is **geen exportknop** voor een `duplicaten_overzicht.csv`. Het deduplicatielog is uitsluitend in te zien via het tabblad *"Gededupliceerd Log"* in de browser.
+- Er is **geen algemene knop** om alle klanten- én productbestanden tegelijk in één archief/ZIP te downloaden.
 
 ---
 
-## Privacy & Gegevensbescherming (AVG / GDPR)
+## Gegevensverwerking & Privacy (AVG / GDPR Context)
 
-- **Geen serveropslag**: De gehele verwerking (parsing, koppeling, opschoning, deduplicatie) draait in het geheugen van de client-browser.
-- **Geen externe tracking**: Er worden geen persoonsgegevens, e-mailadressen of telefoonnummers gelogd of verstuurd naar externe analytics- of AI-diensten.
-- **Veilig voor gevoelige data**: Voldoet aan de vereisten voor veilige verwerking van persoonsgegevens onder de Algemene Verordening Gegevensbescherming (AVG).
+- **Lokale Client-Side Verwerking**:
+  Alle bestandsverwerking (parsen, matchen, transformeren en genereren van downloads) wordt lokaal in de webbrowser van de gebruiker uitgevoerd via JavaScript. Er worden geen persoonsgegevens naar een server van deze applicatie verzonden of daarin opgeslagen.
+- **Geen Automatische AVG-Garantie**:
+  Hoewel lokale verwerking het risico op datalekken via een tussenliggende applicatieserver uitsluit, vormt dit **geen garantie dat automatisch aan alle verplichtingen van de Algemene Verordening Gegevensbescherming (AVG / GDPR) wordt voldaan**. Organisaties die persoonsgegevens verwerken blijven zelf verantwoordelijk voor:
+  - Een geldige wettelijke grondslag voor verwerking (zoals toestemming voor marketing of gerechtvaardigd belang).
+  - Voldoen aan doorgiftevereisten bij het uploaden van geëxporteerde lijsten naar advertentieplatformen van derden (zoals Meta Platforms Ireland Ltd.).
+  - Het respecteren van bewaartermijnen en rechten van betrokkenen (zoals het recht op inzage of verwijdering).
 
 ---
 
-## Installatie & Lokale Ontwikkeling
+## Lokale Installatie & Ontwikkeling
 
 ### Vereisten
-- [Node.js](https://nodejs.org/) versie 18 of hoger
-- `npm` (of `bun` / `pnpm`)
+- Node.js (versie 18 of hoger)
+- npm (of pnpm / bun)
 
-### Installatie
+### Installatie & Uitvoering
+```bash
+# 1. Clone de repository
+git clone https://github.com/jouw-organisatie/csv-converter.git
+cd csv-converter
 
-1. Clone de repository:
-   ```bash
-   git clone https://github.com/jouw-gebruikersnaam/csv-converter.git
-   cd csv-converter
-   ```
+# 2. Installeer afhankelijkheden
+npm install
 
-2. Installeer de benodigde afhankelijkheden:
-   ```bash
-   npm install
-   ```
+# 3. Start ontwikkelserver
+npm run dev
 
-3. Start de lokale ontwikkelserver:
-   ```bash
-   npm run dev
-   ```
-   Open vervolgens [http://localhost:3000](http://localhost:3000) (of de poort getoond in de terminal) in uw browser.
+# 4. Type-checken (linter)
+npm run lint
 
-4. Productie-build genereren:
-   ```bash
-   npm run build
-   ```
-
----
-
-## Licentie
-
-Dit project is ontwikkeld voor intern gebruik en geoptimaliseerd voor marketing- en leadgeneratiedoeleinden van de vestigingen Ommen en Zwolle.
+# 5. Bouwen voor productie
+npm run build
+```
