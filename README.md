@@ -68,7 +68,12 @@ Wanneer een regel wordt gematcht met een bestaand klantprofiel, zoekt het systee
 - De zoekindex (`profilesByRef`, `profilesByEmail`, `profilesByName`) wordt **gezamenlijk opgebouwd over alle geüploade bestanden**, dus over Ommen én Zwolle samen.
 - De index wordt **niet** per vestiging geïsoleerd. Een klantreferentie of e-mailadres uit een bestand van Zwolle kan daardoor matchen met een eerder ingelezen klantprofiel uit een bestand van Ommen.
 
-### 3. Herkende Kolomnamen voor Klantreferentie (`getKlantRef`)
+### 3. Beperking bij Bijwerken van de Zoekindex
+- De maps `profilesByRef`, `profilesByEmail` en `profilesByName` worden **uitsluitend gevuld bij het allereerste aanmaken van een nieuw profiel** (in de `else`-tak van `registerOrMergeCustomer`).
+- Wanneer een bestaand profiel via een latere regel wordt aangevuld met een voorheen ontbrekend e-mailadres, ontbrekende voor-/achternaam of ontbrekende klantreferentie, worden de zoekindexen **niet met terugwerkende kracht bijgewerkt**.
+- **Gevolg:** Latere regels die uitsluitend via die nieuw aangevulde e-mail, naam of referentie zouden kunnen matchen, vinden het profiel niet in de zoekindex en kunnen daardoor een koppeling missen (en eventueel als nieuw los profiel worden aangemaakt).
+
+### 4. Herkende Kolomnamen voor Klantreferentie (`getKlantRef`)
 De functie `getKlantRef` verwijdert alle niet-alfanumerieke tekens uit kolomnamen en zoekt naar:
 - Exact genormaliseerd: `klantref`, `klantreferentie`, `referentie`, `ref`, `klantnummer`, `klantnr`, `lidnummer`, `lidnr`, `relatienummer`, `relatienr`, `memberid`, `clientid`, `klantid`, `relatieid`.
 - Als fallback worden kolomnamen geaccepteerd die `klantref`, `lidnummer` of `klantnummer` bevatten.
@@ -97,6 +102,7 @@ Voordat er gefilterd of geëxporteerd wordt, worden klantbestanden verwerkt via 
   - `phone`: alleen overgenomen als het bestaande profiel nog geen telefoon had.
   - `fn`, `ln`, `zip`, `ct`, `dob`, `doby`, `age`, `gen`, `ref`: alleen ingevuld indien leeg in het bestaande profiel.
   - `baseProduct`, `baseValue`, `baseDate`: alleen ingevuld indien het bestaande profiel nog geen basisproduct had.
+- **Tariefbehandeling bij dubbele klantregels:** Een later samengevoegde klantregel verhoogt `existing.maxSingleTariff` **niet**. Mocht een tweede klantregel voor dezelfde persoon een hoger tarief bevatten (bijvoorbeeld €500 t.o.v. een eerder basistarief van €50), dan gaat dit hogere tarief in het klantprofiel verloren. Gekoppelde productregels (in Stap 2) verhogen `maxSingleTariff` daarentegen **wél**.
 - **Let op:** Deze eerste samenvoegstap (`registerOrMergeCustomer`) blijft **altijd actief**, ongeacht of de deduplicatieschakelaar in de interface aan- of uitstaat.
 
 ---
@@ -121,10 +127,20 @@ Als een groep meerdere records bevat, wordt het winnende record gekozen door sor
 2. **Recentste datum (`_actiefSindsDate`)**:
    Bij gelijke score wint het record waarvan de startdatum het meest recent is (`b.date - a.date`).
 
-### 3. Waardebehoud bij Deduplicatie
-Binnen de groep wordt de hoogste individuele aankoopwaarde (`maxSingleTariff`) bepaald:
-- Als `maxSingleTariff >= 400`, en het geselecteerde record heeft een lagere of lege waarde, krijgt het geselecteerde record `value = maxSingleTariff`.
-- Als het geselecteerde record een waarde van `0` of leeg heeft, en er is een eerdere waarde $> 0$ in de groep, wordt die overgenomen.
+### 3. Exacte Regels voor Waardebehoud bij Deduplicatie
+Binnen de groep wordt de hoogste individuele aankoopwaarde (`maxSingleTariff`) berekend. De toewijzing aan `bestRow.value` gebeurt via deze specifieke condities:
+```ts
+if (maxSingleTariff >= HIGH_VALUE_THRESHOLD && (bestRow.value === "" || Number(bestRow.value) < HIGH_VALUE_THRESHOLD)) {
+  bestRow.value = maxSingleTariff;
+} else if ((bestRow.value === "" || bestRow.value === 0 || Number(bestRow.value) === 0) && maxSingleTariff > 0) {
+  bestRow.value = maxSingleTariff;
+}
+bestRow._maxHistoricalValue = maxSingleTariff;
+```
+Dit betekent in de praktijk:
+- Als `maxSingleTariff >= 400`, wordt de waarde van het beste record **alleen overschreven als die waarde leeg is óf strikt lager dan €400** (`< 400`).
+- **Belangrijke nuance:** Heeft het geselecteerde beste record zelf al een waarde van $\ge 400$ (bijvoorbeeld **€450**), en had een ander record in dezelfde groep een nog hogere waarde van bijvoorbeeld **€600**, dan evalueert `Number(bestRow.value) < 400` naar `false`. De waarde van **€450 wordt in dat geval niet vervangen door €600** (de waarde blijft €450, al wordt `_maxHistoricalValue` wel op €600 gezet).
+- Als de waarde van het beste record leeg of 0 is, en er is een waarde $> 0$ in de groep, dan wordt die overgenomen.
 
 ### 4. Uitschakelen van Deduplicatie
 Wanneer de schakelaar *"Dedupliceren activeren"* in de interface wordt uitgevinkt:
@@ -165,7 +181,8 @@ De selectie voor de High Value lijst (`highValue`) volgt deze specifieke program
    - Een klant kwalificeert als een individueel productrecord of geregistreerd tarief een numerieke waarde van **$\ge 400$** heeft (`!isNaN(num) && num >= 400`).
    - Losse maandbedragen (zoals 12 keer €45) worden **niet** bij elkaar opgeteld.
 3. **Hoe de Hoogste Waarde en Productomschrijving worden Bewaard**:
-   - Bij het inlezen van het productenbestand wordt voor elke klant de hoogste individuele aankoopwaarde bijgehouden in `cust.maxSingleTariff`:
+   - **Belangrijk onderscheid:** `cust.maxSingleTariff` wordt geïnitialiseerd op de waarde van het *eerste* klantrecord (`registerOrMergeCustomer`). Latere klantregels voor dezelfde persoon verhogen deze waarde **niet**.
+   - Bij het inlezen van het **productenbestand** wordt `cust.maxSingleTariff` wél actief bijgewerkt wanneer een gekoppeld product een hogere waarde heeft:
      ```ts
      if (!isNaN(valNum) && valNum > cust.maxSingleTariff) {
        cust.maxSingleTariff = valNum;
