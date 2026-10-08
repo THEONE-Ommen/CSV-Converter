@@ -1,0 +1,6 @@
+{
+  "name": "CSV Converter",
+  "description": "Convert and format Dutch customer CSV and Excel (.xlsx, .xls) records effortlessly with custom duplicate rules, product categorization and phone corrections.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
